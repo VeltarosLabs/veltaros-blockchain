@@ -1,33 +1,35 @@
 package blockchain
 
 import (
-	"fmt"
+	"time"
 
-	"github.com/VeltarosLabs/veltaros-blockchain/pkg/crypto"
+	"github.com/VeltarosLabs/veltaros-blockchain/internal/transaction"
 )
 
 type Blockchain struct {
-	Blocks []*Block
+	Chain []Block
 }
 
 func NewBlockchain() *Blockchain {
 	genesis := CreateGenesisBlock()
 	return &Blockchain{
-		Blocks: []*Block{genesis},
+		Chain: []Block{genesis},
 	}
 }
 
-func (bc *Blockchain) AddBlock(data string) {
-	prev := bc.Blocks[len(bc.Blocks)-1]
-	newBlock := NewBlock(len(bc.Blocks), data, prev.Hash)
+func (bc *Blockchain) AddBlock(transactions []transaction.Transaction) {
+	prevBlock := bc.Chain[len(bc.Chain)-1]
 
-	newBlock.Hash = crypto.CalculateHash(fmt.Sprintf(
-		"%d%d%s%s",
-		newBlock.Index,
-		newBlock.Timestamp,
-		newBlock.Data,
-		newBlock.PrevHash,
-	))
+	newBlock := Block{
+		Index:        prevBlock.Index + 1,
+		Timestamp:    time.Now().Unix(),
+		Transactions: transactions,
+		PrevHash:     prevBlock.Hash,
+	}
 
-	bc.Blocks = append(bc.Blocks, newBlock)
+	MineBlock(&newBlock)
+
+	if IsBlockValid(newBlock, prevBlock) {
+		bc.Chain = append(bc.Chain, newBlock)
+	}
 }
