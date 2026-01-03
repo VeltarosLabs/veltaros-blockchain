@@ -1,13 +1,10 @@
 package blockchain
 
-import (
-	"github.com/VeltarosLabs/veltaros-blockchain/internal/transaction"
-)
-
+// Block represents a single block
 type Block struct {
 	Index        int
 	Timestamp    int64
-	Transactions []transaction.Transaction
+	Transactions []Transaction
 	PrevHash     string
 	Hash         string
 	Nonce        int

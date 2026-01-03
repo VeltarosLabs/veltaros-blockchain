@@ -1,35 +1,37 @@
 package blockchain
 
-import (
-	"time"
+import "time"
 
-	"github.com/VeltarosLabs/veltaros-blockchain/internal/transaction"
-)
-
+// Blockchain represents the full chain and its mempool
 type Blockchain struct {
-	Chain []Block
+	Blocks  []Block
+	Mempool *Mempool
 }
 
+// NewBlockchain initializes the blockchain with genesis block
 func NewBlockchain() *Blockchain {
-	genesis := CreateGenesisBlock()
 	return &Blockchain{
-		Chain: []Block{genesis},
+		Blocks:  []Block{GenesisBlock()},
+		Mempool: NewMempool(),
 	}
 }
 
-func (bc *Blockchain) AddBlock(transactions []transaction.Transaction) {
-	prevBlock := bc.Chain[len(bc.Chain)-1]
+// AddTransaction adds a transaction to the mempool
+func (bc *Blockchain) AddTransaction(tx Transaction) {
+	bc.Mempool.AddTransaction(tx)
+}
+
+// MinePendingTransactions creates a new block from mempool txs
+func (bc *Blockchain) MinePendingTransactions() {
+	lastBlock := bc.Blocks[len(bc.Blocks)-1]
 
 	newBlock := Block{
-		Index:        prevBlock.Index + 1,
+		Index:        lastBlock.Index + 1,
 		Timestamp:    time.Now().Unix(),
-		Transactions: transactions,
-		PrevHash:     prevBlock.Hash,
+		Transactions: bc.Mempool.Flush(),
+		PrevHash:     lastBlock.Hash,
 	}
 
 	MineBlock(&newBlock)
-
-	if IsBlockValid(newBlock, prevBlock) {
-		bc.Chain = append(bc.Chain, newBlock)
-	}
+	bc.Blocks = append(bc.Blocks, newBlock)
 }
