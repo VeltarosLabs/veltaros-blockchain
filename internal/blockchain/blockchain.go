@@ -8,7 +8,6 @@ type Blockchain struct {
 	Mempool *Mempool
 }
 
-// NewBlockchain initializes the blockchain with genesis block
 func NewBlockchain() *Blockchain {
 	return &Blockchain{
 		Blocks:  []Block{GenesisBlock()},
@@ -16,22 +15,43 @@ func NewBlockchain() *Blockchain {
 	}
 }
 
-// AddTransaction adds a transaction to the mempool
 func (bc *Blockchain) AddTransaction(tx Transaction) error {
 	return bc.Mempool.AddTransaction(tx)
 }
 
-// MinePendingTransactions creates a new block from mempool txs
-func (bc *Blockchain) MinePendingTransactions() {
-	lastBlock := bc.Blocks[len(bc.Blocks)-1]
+func (bc *Blockchain) MinePendingTransactions() Block {
+	last := bc.Blocks[len(bc.Blocks)-1]
 
 	newBlock := Block{
-		Index:        lastBlock.Index + 1,
+		Index:        last.Index + 1,
 		Timestamp:    time.Now().Unix(),
 		Transactions: bc.Mempool.Flush(),
-		PrevHash:     lastBlock.Hash,
+		PrevHash:     last.Hash,
 	}
 
 	MineBlock(&newBlock)
 	bc.Blocks = append(bc.Blocks, newBlock)
+	return newBlock
+}
+
+// TryAddBlock validates then appends a network block.
+func (bc *Blockchain) TryAddBlock(b Block) bool {
+	last := bc.Blocks[len(bc.Blocks)-1]
+	if !IsBlockValid(b, last) {
+		return false
+	}
+	bc.Blocks = append(bc.Blocks, b)
+	return true
+}
+
+// TryReplaceChain applies fork rule: prefer longer valid chain.
+func (bc *Blockchain) TryReplaceChain(candidate []Block) bool {
+	if len(candidate) <= len(bc.Blocks) {
+		return false
+	}
+	if !IsChainValid(candidate) {
+		return false
+	}
+	bc.Blocks = candidate
+	return true
 }

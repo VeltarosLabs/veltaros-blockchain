@@ -1,6 +1,9 @@
 package blockchain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -11,20 +14,36 @@ const Difficulty = 4
 
 func MineBlock(block *Block) {
 	for {
-		hash := calculateBlockHash(block)
+		hash := CalculateBlockHash(block)
 		if strings.HasPrefix(hash, strings.Repeat("0", Difficulty)) {
 			block.Hash = hash
-			break
+			return
 		}
 		block.Nonce++
 	}
 }
 
-func calculateBlockHash(block *Block) string {
+// CalculateBlockHash MUST include transactions to prevent tampering.
+func CalculateBlockHash(block *Block) string {
+	txDigest := TransactionsDigest(block.Transactions)
+
 	record := strconv.Itoa(block.Index) +
 		strconv.FormatInt(block.Timestamp, 10) +
+		txDigest +
 		block.PrevHash +
 		strconv.Itoa(block.Nonce)
 
 	return crypto.GenerateHash(record)
+}
+
+// TransactionsDigest creates a deterministic digest of txs.
+func TransactionsDigest(txs []Transaction) string {
+	// Use JSON + SHA256 for deterministic digest (simple + stable).
+	b, _ := json.Marshal(txs)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func IsPoWValid(hash string) bool {
+	return strings.HasPrefix(hash, strings.Repeat("0", Difficulty))
 }

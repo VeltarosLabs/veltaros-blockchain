@@ -5,7 +5,6 @@ import (
 	"net"
 )
 
-// StartServer starts listening for peers
 func (n *Node) StartServer() error {
 	ln, err := net.Listen("tcp", n.Address)
 	if err != nil {
@@ -20,15 +19,16 @@ func (n *Node) StartServer() error {
 			continue
 		}
 
-		peer := &Peer{
-			Conn: conn,
-			Addr: conn.RemoteAddr().String(),
-		}
+		remote := conn.RemoteAddr().String()
+		peer := &Peer{Conn: conn, Addr: remote}
 
 		n.lock.Lock()
-		n.Peers[peer.Addr] = peer
+		n.Peers[remote] = peer
 		n.lock.Unlock()
 
 		go n.handlePeer(peer)
+
+		// Ask the inbound peer for their chain as well
+		n.sendToPeer(peer, Message{Type: MsgGetChain, Data: []byte(`{}`)})
 	}
 }

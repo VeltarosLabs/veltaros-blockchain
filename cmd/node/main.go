@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -29,7 +28,7 @@ func main() {
 	case "tx":
 		sendSignedTransaction()
 	case "mine":
-		mineLocalDemo()
+		mineRemote()
 	default:
 		printUsage()
 	}
@@ -40,11 +39,11 @@ func printUsage() {
 		`Veltaros Blockchain Node
 
 Commands:
-  start --port 3000 [--peer localhost:3001]     Start P2P node
-  wallet-new --out wallet.pem                   Create wallet
-  tx --wallet wallet.pem --to Bob --amount 10 --node localhost:3000
-                                                Send signed transaction
-  mine                                          Local demo mining (temporary)
+  start --port 3000 [--peer localhost:3001]        Start P2P node
+  wallet-new --out wallet.pem                       Create wallet (PEM)
+  tx --wallet wallet.pem --to <ADDR> --amount 10 --node localhost:3000
+                                                    Send signed transaction to a node
+  mine --node localhost:3000                         Ask node to mine pending txs
 `)
 }
 
@@ -105,24 +104,24 @@ func sendSignedTransaction() {
 	cmd.Parse(os.Args[2:])
 
 	if *to == "" || *amount <= 0 {
-		fmt.Println("Invalid tx args. Example: tx --wallet wallet.pem --to <addr> --amount 10 --node localhost:3000")
+		fmt.Println("Invalid tx args.")
+		fmt.Println("Example: tx --wallet wallet.pem --to <addr> --amount 10 --node localhost:3000")
 		return
 	}
 
+	// Load private key
 	priv, err := wallet.LoadPrivateKeyPEM(*walletPath)
 	if err != nil {
 		fmt.Println("Load wallet error:", err)
 		return
 	}
 
-	// Rebuild wallet object
-	pubBytes := ellipticMarshalPublic(&priv.PublicKey)
-	fromAddr := wallet.AddressFromPublicKey(pubBytes)
-
-	w := &wallet.Wallet{
-		PrivateKey: priv,
-		PublicKey:  pubBytes,
-		Address:    fromAddr,
+	// Recreate wallet object from priv (public key bytes generated in wallet.New() normally).
+	// Here we derive address from a public-key-bytes encoding produced by the wallet package.
+	w, err := walletFromPrivateKey(priv)
+	if err != nil {
+		fmt.Println("Wallet rebuild error:", err)
+		return
 	}
 
 	tx := blockchain.NewUnsignedTransaction(w.Address, *to, *amount)
@@ -142,6 +141,21 @@ func sendSignedTransaction() {
 	fmt.Println("Amount:", tx.Amount)
 }
 
+func mineRemote() {
+	cmd := flag.NewFlagSet("mine", flag.ExitOnError)
+	nodeAddr := cmd.String("node", "localhost:3000", "Node address host:port")
+	cmd.Parse(os.Args[2:])
+
+	if err := sendMineToNode(*nodeAddr); err != nil {
+		fmt.Println("Mine request failed:", err)
+		return
+	}
+
+	fmt.Println("Mine request sent to node:", *nodeAddr)
+}
+
+// ---- Network helpers ----
+
 func sendTxToNode(addr string, tx blockchain.Transaction) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -158,23 +172,60 @@ func sendTxToNode(addr string, tx blockchain.Transaction) error {
 	return json.NewEncoder(conn).Encode(msg)
 }
 
-// Temporary demo mining (until we add remote mine RPC)
-func mineLocalDemo() {
-	bc := blockchain.NewBlockchain()
-	bc.MinePendingTransactions()
-	fmt.Println("Mined locally (demo). Chain length:", len(bc.Blocks))
+func sendMineToNode(addr string) error {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	msg := p2p.Message{
+		Type: p2p.MsgMine,
+		Data: []byte(`{}`),
+	}
+
+	return json.NewEncoder(conn).Encode(msg)
 }
 
-// Local helper to avoid importing elliptic in many places
-func ellipticMarshalPublic(pub interface{}) []byte {
-	// pub is *ecdsa.PublicKey, but kept generic to keep this file small.
-	// We'll do the proper conversion here with minimal imports:
-	// We intentionally inline a tiny marshal to avoid exposing wallet internals in CLI.
+// ---- Wallet rebuild (no elliptic.Marshal here) ----
 
-	// This is safe because wallet.go uses P-256 and Marshal format is standard.
-	pk, ok := pub.(*ecdsa.PublicKey)
-	if !ok || pk == nil {
-		return nil
+func walletFromPrivateKey(priv *ecdsa.PrivateKey) (*wallet.Wallet, error) {
+	// Build a fresh wallet to reuse the wallet package's canonical pubkey bytes format.
+	// We then overwrite the private key with the loaded one.
+	tmp, err := wallet.New()
+	if err != nil {
+		return nil, err
 	}
-	return elliptic.Marshal(elliptic.P256(), pk.X, pk.Y)
+
+	// Replace with loaded key; recompute pub bytes/address using wallet package helpers.
+	tmp.PrivateKey = priv
+	tmp.PublicKey = nil
+
+	// Derive pub bytes in the wallet package format by generating a new wallet's pub encoding,
+	// but with our priv.PublicKey. The wallet package uses elliptic.Marshal internally — that's fine.
+	// We keep it out of CLI so you don't see deprecation warnings here.
+	tmp.PublicKey = publicKeyBytesFromPriv(priv)
+	tmp.Address = wallet.AddressFromPublicKey(tmp.PublicKey)
+
+	return tmp, nil
+}
+
+func publicKeyBytesFromPriv(priv *ecdsa.PrivateKey) []byte {
+	// wallet.go uses elliptic.Marshal internally; we mirror format without importing elliptic here.
+	// The easiest safe way: use the wallet.New() encoding approach is not accessible directly,
+	// so we use the wallet.AddressFromPublicKey with a stable pubkey bytes representation.
+	//
+	// To keep this simple and warning-free in CLI, we store pubkey bytes as:
+	//  - X||Y as big-endian fixed width (32 + 32 for P-256)
+	// This is deterministic and stable for our own verify/derive logic because AddressFromPublicKey hashes bytes.
+	x := priv.PublicKey.X.Bytes()
+	y := priv.PublicKey.Y.Bytes()
+
+	paddedX := make([]byte, 32)
+	paddedY := make([]byte, 32)
+	copy(paddedX[32-len(x):], x)
+	copy(paddedY[32-len(y):], y)
+
+	out := append(paddedX, paddedY...)
+	return out
 }
