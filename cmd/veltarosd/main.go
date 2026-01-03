@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":3000", "listen address (e.g. :3000)")
+	addr := flag.String("addr", ":3000", "listen address (example: :3000)")
 	flag.Parse()
 
 	chain := blockchain.NewBlockchain()

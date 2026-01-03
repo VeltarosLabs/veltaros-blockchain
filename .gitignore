@@ -1,0 +1,5 @@
+*.pem
+*.db
+*.bolt
+*.sqlite
+.DS_Store

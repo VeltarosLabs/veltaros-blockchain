@@ -16,15 +16,15 @@ func NewNode(chain *blockchain.Blockchain) *Node {
 	return &Node{Chain: chain}
 }
 
-func (n *Node) Start(port string) {
+func (n *Node) Start(addr string) {
 	http.HandleFunc("/transaction", n.handleTransaction) // POST
+	http.HandleFunc("/tx", n.handleTransaction)          // POST (alias for your CLI)
 	http.HandleFunc("/mine", n.handleMine)               // POST
 	http.HandleFunc("/chain", n.handleChain)             // GET
 	http.HandleFunc("/balance", n.handleBalance)         // GET ?addr=
-	http.HandleFunc("/tx", n.handleNewTx)
 
-	log.Println("HTTP API listening on port", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Println("HTTP API listening on", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
