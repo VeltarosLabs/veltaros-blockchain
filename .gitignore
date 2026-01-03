@@ -3,3 +3,10 @@
 *.bolt
 *.sqlite
 .DS_Store
+# wallets / private keys (NEVER commit)
+*.pem
+
+# optional: local db files if you persist later
+*.db
+*.bolt
+data/
