@@ -29,6 +29,8 @@ func main() {
 		sendSignedTransaction()
 	case "mine":
 		mineRemote()
+	case "balance":
+		balance()
 	default:
 		printUsage()
 	}
@@ -36,14 +38,15 @@ func main() {
 
 func printUsage() {
 	fmt.Print(
-		`Veltaros Blockchain Node
+		`Veltaros CLI (P2P)
 
 Commands:
-  start --port 3000 [--peer localhost:3001]        Start P2P node
-  wallet-new --out wallet.pem                       Create wallet (PEM)
-  tx --wallet wallet.pem --to <ADDR> --amount 10 --node localhost:3000
-                                                    Send signed transaction to a node
-  mine --node localhost:3000                         Ask node to mine pending txs
+  start --port 3000 [--peer localhost:3001]             Start P2P node
+  wallet-new --out wallet.pem                            Create wallet PEM
+  tx --wallet wallet.pem --to ADDR --amount 10 --node localhost:3000
+                                                         Send signed tx to node
+  mine --wallet wallet.pem --node localhost:3000          Ask node to mine (reward to wallet)
+  balance --addr ADDR --node localhost:3000               Get balance (rebuild from chain)
 `)
 }
 
@@ -58,11 +61,11 @@ func startNode() {
 
 	go func() {
 		if err := node.StartServer(); err != nil {
-			fmt.Println("Server error:", err)
+			fmt.Println("P2P server error:", err)
 		}
 	}()
 
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(250 * time.Millisecond)
 
 	if *peer != "" {
 		if err := node.Connect(*peer); err != nil {
@@ -70,7 +73,7 @@ func startNode() {
 		}
 	}
 
-	fmt.Println("Node running on port", *port, "(CTRL+C to stop)")
+	fmt.Println("P2P node running on port", *port, "(CTRL+C to stop)")
 	select {}
 }
 
@@ -104,20 +107,16 @@ func sendSignedTransaction() {
 	cmd.Parse(os.Args[2:])
 
 	if *to == "" || *amount <= 0 {
-		fmt.Println("Invalid tx args.")
-		fmt.Println("Example: tx --wallet wallet.pem --to <addr> --amount 10 --node localhost:3000")
+		fmt.Println("Usage: tx --wallet wallet.pem --to ADDR --amount 10 --node localhost:3000")
 		return
 	}
 
-	// Load private key
 	priv, err := wallet.LoadPrivateKeyPEM(*walletPath)
 	if err != nil {
 		fmt.Println("Load wallet error:", err)
 		return
 	}
 
-	// Recreate wallet object from priv (public key bytes generated in wallet.New() normally).
-	// Here we derive address from a public-key-bytes encoding produced by the wallet package.
 	w, err := walletFromPrivateKey(priv)
 	if err != nil {
 		fmt.Println("Wallet rebuild error:", err)
@@ -143,18 +142,64 @@ func sendSignedTransaction() {
 
 func mineRemote() {
 	cmd := flag.NewFlagSet("mine", flag.ExitOnError)
+	walletPath := cmd.String("wallet", "wallet.pem", "Wallet PEM file (miner reward)")
 	nodeAddr := cmd.String("node", "localhost:3000", "Node address host:port")
 	cmd.Parse(os.Args[2:])
 
-	if err := sendMineToNode(*nodeAddr); err != nil {
+	priv, err := wallet.LoadPrivateKeyPEM(*walletPath)
+	if err != nil {
+		fmt.Println("Load wallet error:", err)
+		return
+	}
+
+	w, err := walletFromPrivateKey(priv)
+	if err != nil {
+		fmt.Println("Wallet rebuild error:", err)
+		return
+	}
+
+	if err := sendMineToNode(*nodeAddr, w.Address); err != nil {
 		fmt.Println("Mine request failed:", err)
 		return
 	}
 
 	fmt.Println("Mine request sent to node:", *nodeAddr)
+	fmt.Println("Miner reward address:", w.Address)
 }
 
-// ---- Network helpers ----
+func balance() {
+	cmd := flag.NewFlagSet("balance", flag.ExitOnError)
+	addr := cmd.String("addr", "", "Address to check")
+	nodeAddr := cmd.String("node", "localhost:3000", "Node address host:port")
+	cmd.Parse(os.Args[2:])
+
+	if *addr == "" {
+		fmt.Println("Usage: balance --addr ADDR --node localhost:3000")
+		return
+	}
+
+	chain, err := requestChain(*nodeAddr)
+	if err != nil {
+		fmt.Println("Balance request failed:", err)
+		return
+	}
+
+	state := blockchain.NewState()
+	for _, b := range chain {
+		for _, tx := range b.Transactions {
+			ok, _ := tx.VerifySignatureOnly()
+			if !ok {
+				fmt.Println("Chain contains invalid tx; cannot compute balance")
+				return
+			}
+			_ = state.ApplyTx(tx)
+		}
+	}
+
+	fmt.Printf("Balance(%s) = %d VLT\n", *addr, state.GetBalance(*addr))
+}
+
+// -------------------- networking helpers (P2P messages) --------------------
 
 func sendTxToNode(addr string, tx blockchain.Transaction) error {
 	conn, err := net.Dial("tcp", addr)
@@ -164,68 +209,74 @@ func sendTxToNode(addr string, tx blockchain.Transaction) error {
 	defer conn.Close()
 
 	raw, _ := json.Marshal(tx)
-	msg := p2p.Message{
-		Type: p2p.MsgTransaction,
-		Data: raw,
-	}
-
+	msg := p2p.Message{Type: p2p.MsgTransaction, Data: raw}
 	return json.NewEncoder(conn).Encode(msg)
 }
 
-func sendMineToNode(addr string) error {
+func sendMineToNode(addr string, miner string) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	msg := p2p.Message{
-		Type: p2p.MsgMine,
-		Data: []byte(`{}`),
-	}
-
+	payload, _ := json.Marshal(map[string]string{"miner": miner})
+	msg := p2p.Message{Type: p2p.MsgMine, Data: payload}
 	return json.NewEncoder(conn).Encode(msg)
 }
 
-// ---- Wallet rebuild (no elliptic.Marshal here) ----
-
-func walletFromPrivateKey(priv *ecdsa.PrivateKey) (*wallet.Wallet, error) {
-	// Build a fresh wallet to reuse the wallet package's canonical pubkey bytes format.
-	// We then overwrite the private key with the loaded one.
-	tmp, err := wallet.New()
+func requestChain(addr string) ([]blockchain.Block, error) {
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	defer conn.Close()
 
-	// Replace with loaded key; recompute pub bytes/address using wallet package helpers.
-	tmp.PrivateKey = priv
-	tmp.PublicKey = nil
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
 
-	// Derive pub bytes in the wallet package format by generating a new wallet's pub encoding,
-	// but with our priv.PublicKey. The wallet package uses elliptic.Marshal internally — that's fine.
-	// We keep it out of CLI so you don't see deprecation warnings here.
-	tmp.PublicKey = publicKeyBytesFromPriv(priv)
-	tmp.Address = wallet.AddressFromPublicKey(tmp.PublicKey)
+	if err := enc.Encode(p2p.Message{Type: p2p.MsgGetChain, Data: []byte(`{}`)}); err != nil {
+		return nil, err
+	}
 
-	return tmp, nil
+	var msg p2p.Message
+	if err := dec.Decode(&msg); err != nil {
+		return nil, err
+	}
+	if msg.Type != p2p.MsgChain {
+		return nil, fmt.Errorf("unexpected response: %s", msg.Type)
+	}
+
+	var chain []blockchain.Block
+	if err := json.Unmarshal(msg.Data, &chain); err != nil {
+		return nil, err
+	}
+	return chain, nil
+}
+
+// -------------------- wallet helpers --------------------
+
+// We avoid elliptic.Marshal in this file by encoding pubkey as fixed X||Y (P-256).
+func walletFromPrivateKey(priv *ecdsa.PrivateKey) (*wallet.Wallet, error) {
+	pub := publicKeyBytesFromPriv(priv)
+	addr := wallet.AddressFromPublicKey(pub)
+
+	return &wallet.Wallet{
+		PrivateKey: priv,
+		PublicKey:  pub,
+		Address:    addr,
+	}, nil
 }
 
 func publicKeyBytesFromPriv(priv *ecdsa.PrivateKey) []byte {
-	// wallet.go uses elliptic.Marshal internally; we mirror format without importing elliptic here.
-	// The easiest safe way: use the wallet.New() encoding approach is not accessible directly,
-	// so we use the wallet.AddressFromPublicKey with a stable pubkey bytes representation.
-	//
-	// To keep this simple and warning-free in CLI, we store pubkey bytes as:
-	//  - X||Y as big-endian fixed width (32 + 32 for P-256)
-	// This is deterministic and stable for our own verify/derive logic because AddressFromPublicKey hashes bytes.
 	x := priv.PublicKey.X.Bytes()
 	y := priv.PublicKey.Y.Bytes()
 
 	paddedX := make([]byte, 32)
 	paddedY := make([]byte, 32)
+
 	copy(paddedX[32-len(x):], x)
 	copy(paddedY[32-len(y):], y)
 
-	out := append(paddedX, paddedY...)
-	return out
+	return append(paddedX, paddedY...)
 }

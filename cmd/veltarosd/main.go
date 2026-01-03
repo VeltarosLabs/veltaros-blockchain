@@ -1,42 +1,47 @@
-package network
+package main
 
 import (
-	"encoding/json"
-	"log"
-	"net/http"
+	"flag"
+	"fmt"
+	"time"
 
 	"github.com/VeltarosLabs/veltaros-blockchain/internal/blockchain"
+	"github.com/VeltarosLabs/veltaros-blockchain/internal/network"
+	"github.com/VeltarosLabs/veltaros-blockchain/internal/p2p"
 )
 
-type Node struct {
-	Chain *blockchain.Blockchain
-}
+func main() {
+	p2pPort := flag.String("p2p", "3000", "P2P port")
+	httpPort := flag.String("http", "8080", "HTTP API port")
+	peer := flag.String("peer", "", "Optional peer address host:port")
+	flag.Parse()
 
-func NewNode(chain *blockchain.Blockchain) *Node {
-	return &Node{Chain: chain}
-}
+	bc := blockchain.NewBlockchain()
 
-func (n *Node) Start(port string) {
-	http.HandleFunc("/transaction", n.handleTransaction)
-	http.HandleFunc("/mine", n.handleMine)
-	http.HandleFunc("/chain", n.handleChain)
+	// Start P2P node
+	node := p2p.NewNode(":"+*p2pPort, bc)
+	go func() {
+		if err := node.StartServer(); err != nil {
+			fmt.Println("P2P server error:", err)
+		}
+	}()
 
-	log.Println("Node listening on port", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
-}
+	time.Sleep(250 * time.Millisecond)
 
-func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
-	var tx blockchain.Transaction
-	json.NewDecoder(r.Body).Decode(&tx)
-	n.Chain.AddTransaction(tx)
-	w.Write([]byte("Transaction added"))
-}
+	if *peer != "" {
+		if err := node.Connect(*peer); err != nil {
+			fmt.Println("Failed to connect to peer:", err)
+		}
+	}
 
-func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
-	n.Chain.MinePendingTransactions()
-	w.Write([]byte("Block mined"))
-}
+	// Start HTTP debug API
+	api := network.NewNode(bc)
+	go api.Start(*httpPort)
 
-func (n *Node) handleChain(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(n.Chain.Blocks)
+	fmt.Println("veltarosd running")
+	fmt.Println("P2P  : localhost:" + *p2pPort)
+	fmt.Println("HTTP : localhost:" + *httpPort)
+	fmt.Println("(CTRL+C to stop)")
+
+	select {}
 }

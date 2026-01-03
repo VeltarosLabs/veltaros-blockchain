@@ -15,9 +15,8 @@ type Transaction struct {
 	Amount    int    `json:"amount"`
 	Timestamp int64  `json:"timestamp"`
 
-	// Signing fields
-	PublicKey []byte `json:"publicKey"`
-	Signature []byte `json:"signature"`
+	PublicKey []byte `json:"publicKey,omitempty"`
+	Signature []byte `json:"signature,omitempty"`
 }
 
 func NewUnsignedTransaction(from, to string, amount int) Transaction {
@@ -29,7 +28,21 @@ func NewUnsignedTransaction(from, to string, amount int) Transaction {
 	}
 }
 
-// Hash returns a deterministic hash of the tx content (excluding signature).
+func NewCoinbaseTransaction(to string) Transaction {
+	return Transaction{
+		From:      CoinbaseFrom,
+		To:        to,
+		Amount:    MinerReward,
+		Timestamp: time.Now().Unix(),
+		// no signature needed
+	}
+}
+
+func (tx Transaction) IsCoinbase() bool {
+	return tx.From == CoinbaseFrom
+}
+
+// Hash excludes Signature but includes PublicKey if present.
 func (tx Transaction) Hash() []byte {
 	h := sha256.New()
 
@@ -46,39 +59,43 @@ func (tx Transaction) Hash() []byte {
 
 	h.Write(tx.PublicKey)
 
-	sum := h.Sum(nil)
-	return sum
+	return h.Sum(nil)
 }
 
 func (tx *Transaction) SignWith(w *wallet.Wallet) error {
+	if tx.IsCoinbase() {
+		return errors.New("coinbase tx cannot be signed")
+	}
 	if w == nil {
 		return errors.New("nil wallet")
 	}
-
-	// Ensure tx.From matches wallet address
 	if tx.From != w.Address {
 		return errors.New("tx.From does not match wallet address")
 	}
 
 	tx.PublicKey = w.PublicKey
-	msgHash := tx.Hash()
-
-	sig, err := w.Sign(msgHash)
+	sig, err := w.Sign(tx.Hash())
 	if err != nil {
 		return err
 	}
-
 	tx.Signature = sig
 	return nil
 }
 
-func (tx Transaction) Verify() (bool, error) {
-	// Address must match public key
+func (tx Transaction) VerifySignatureOnly() (bool, error) {
+	if tx.IsCoinbase() {
+		// coinbase has no signature
+		return true, nil
+	}
+
+	if len(tx.PublicKey) == 0 || len(tx.Signature) == 0 {
+		return false, errors.New("missing pubkey/signature")
+	}
+
 	derived := wallet.AddressFromPublicKey(tx.PublicKey)
 	if derived != tx.From {
 		return false, errors.New("from address does not match public key")
 	}
 
-	msgHash := tx.Hash()
-	return wallet.VerifySignature(tx.PublicKey, msgHash, tx.Signature)
+	return wallet.VerifySignature(tx.PublicKey, tx.Hash(), tx.Signature)
 }

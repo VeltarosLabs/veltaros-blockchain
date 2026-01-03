@@ -1,9 +1,6 @@
 package blockchain
 
-import (
-	"errors"
-	"sync"
-)
+import "sync"
 
 type Mempool struct {
 	transactions []Transaction
@@ -15,14 +12,6 @@ func NewMempool() *Mempool {
 }
 
 func (m *Mempool) AddTransaction(tx Transaction) error {
-	ok, err := tx.Verify()
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.New("invalid signature")
-	}
-
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.transactions = append(m.transactions, tx)

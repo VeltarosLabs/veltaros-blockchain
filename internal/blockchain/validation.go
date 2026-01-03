@@ -1,6 +1,6 @@
 package blockchain
 
-// IsBlockValid checks linkage + PoW + hash correctness.
+// IsBlockValid validates a block against previous block + PoW + tx signatures.
 func IsBlockValid(newBlock Block, prevBlock Block) bool {
 	if prevBlock.Index+1 != newBlock.Index {
 		return false
@@ -13,13 +13,15 @@ func IsBlockValid(newBlock Block, prevBlock Block) bool {
 	if newBlock.Hash != calculated {
 		return false
 	}
+
+	// PoW check (IsPoWValid is defined in mining.go)
 	if !IsPoWValid(newBlock.Hash) {
 		return false
 	}
 
-	// Optional: verify all tx signatures (recommended)
+	// Validate transactions (signature-only; coinbase allowed)
 	for _, tx := range newBlock.Transactions {
-		ok, _ := tx.Verify()
+		ok, _ := tx.VerifySignatureOnly()
 		if !ok {
 			return false
 		}
@@ -28,17 +30,9 @@ func IsBlockValid(newBlock Block, prevBlock Block) bool {
 	return true
 }
 
-// IsChainValid validates a full chain.
+// IsChainValid validates the entire chain.
 func IsChainValid(chain []Block) bool {
 	if len(chain) == 0 {
-		return false
-	}
-	// Genesis: basic PoW/hash validity
-	gen := chain[0]
-	if gen.PrevHash != "0" {
-		return false
-	}
-	if gen.Hash != CalculateBlockHash(&gen) || !IsPoWValid(gen.Hash) {
 		return false
 	}
 
@@ -47,5 +41,6 @@ func IsChainValid(chain []Block) bool {
 			return false
 		}
 	}
+
 	return true
 }

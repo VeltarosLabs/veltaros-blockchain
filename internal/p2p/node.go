@@ -103,8 +103,21 @@ func (n *Node) handleMessage(sender string, msg Message) {
 		n.BroadcastExcept(sender, msg)
 
 	case MsgMine:
-		// Mine locally on request
-		newBlock := n.Blockchain.MinePendingTransactions()
+		var payload struct {
+			Miner string `json:"miner"`
+		}
+		_ = json.Unmarshal(msg.Data, &payload)
+		if payload.Miner == "" {
+			fmt.Println("Mine request missing miner address")
+			return
+		}
+
+		newBlock, err := n.Blockchain.MinePendingTransactions(payload.Miner)
+		if err != nil {
+			fmt.Println("Mine failed:", err)
+			return
+		}
+
 		raw, _ := json.Marshal(newBlock)
 		n.Broadcast(Message{Type: MsgBlock, Data: raw})
 
