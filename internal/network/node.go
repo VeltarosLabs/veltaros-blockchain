@@ -21,6 +21,7 @@ func (n *Node) Start(port string) {
 	http.HandleFunc("/mine", n.handleMine)               // POST
 	http.HandleFunc("/chain", n.handleChain)             // GET
 	http.HandleFunc("/balance", n.handleBalance)         // GET ?addr=
+	http.HandleFunc("/tx", n.handleNewTx)
 
 	log.Println("HTTP API listening on port", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
@@ -104,5 +105,38 @@ func (n *Node) handleBalance(w http.ResponseWriter, r *http.Request) {
 		"address": addr,
 		"balance": n.Chain.State.GetBalance(addr),
 		"unit":    "VLT",
+	})
+}
+
+// POST /tx
+// body: {"from":"...","to":"...","amount":10}
+func (n *Node) handleNewTx(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Amount int    `json:"amount"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	tx := blockchain.NewTransaction(req.From, req.To, req.Amount)
+
+	if err := n.Chain.AddTransaction(tx); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": true,
+		"tx": tx,
 	})
 }
