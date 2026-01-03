@@ -1,6 +1,5 @@
 package blockchain
 
-// Block represents a single block
 type Block struct {
 	Index        int
 	Timestamp    int64

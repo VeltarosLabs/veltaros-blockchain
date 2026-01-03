@@ -1,47 +1,27 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
-	"time"
+	"log"
+	"os"
 
 	"github.com/VeltarosLabs/veltaros-blockchain/internal/blockchain"
 	"github.com/VeltarosLabs/veltaros-blockchain/internal/network"
-	"github.com/VeltarosLabs/veltaros-blockchain/internal/p2p"
 )
 
 func main() {
-	p2pPort := flag.String("p2p", "3000", "P2P port")
-	httpPort := flag.String("http", "8080", "HTTP API port")
-	peer := flag.String("peer", "", "Optional peer address host:port")
+	addr := flag.String("addr", ":3000", "listen address (e.g. :3000)")
 	flag.Parse()
 
-	bc := blockchain.NewBlockchain()
+	chain := blockchain.NewBlockchain()
+	node := network.NewNode(chain)
 
-	// Start P2P node
-	node := p2p.NewNode(":"+*p2pPort, bc)
-	go func() {
-		if err := node.StartServer(); err != nil {
-			fmt.Println("P2P server error:", err)
-		}
-	}()
+	log.Println("Starting node on", *addr)
+	node.Start(*addr)
 
-	time.Sleep(250 * time.Millisecond)
-
-	if *peer != "" {
-		if err := node.Connect(*peer); err != nil {
-			fmt.Println("Failed to connect to peer:", err)
-		}
-	}
-
-	// Start HTTP debug API
-	api := network.NewNode(bc)
-	go api.Start(*httpPort)
-
-	fmt.Println("veltarosd running")
-	fmt.Println("P2P  : localhost:" + *p2pPort)
-	fmt.Println("HTTP : localhost:" + *httpPort)
-	fmt.Println("(CTRL+C to stop)")
-
-	select {}
+	// Keep process alive (and cleanly fix the Read() mismatch)
+	fmt.Println("Node running. Press ENTER to stop.")
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 }

@@ -70,3 +70,8 @@ func unmarshalPublicKey(b []byte) (*ecdsa.PublicKey, error) {
 	}
 	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}, nil
 }
+
+// NewWallet is kept for CLI compatibility.
+func NewWallet() (*Wallet, error) {
+	return New() // <-- change this to whatever your constructor is called
+}

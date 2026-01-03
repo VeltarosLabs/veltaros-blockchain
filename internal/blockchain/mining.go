@@ -1,21 +1,45 @@
 package blockchain
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/VeltarosLabs/veltaros-blockchain/pkg/crypto"
 )
 
-const Difficulty = 4
+// now returns unix timestamp (seconds).
+func now() int64 {
+	return time.Now().Unix()
+}
 
+// SimpleSHA256 is a small helper used by some code paths.
+// It returns a hex string hash of input.
+func SimpleSHA256(input string) string {
+	return crypto.GenerateHash(input)
+}
+
+// CalculateBlockHash calculates the hash of a block.
+func CalculateBlockHash(block *Block) string {
+	record := strconv.Itoa(block.Index) +
+		strconv.FormatInt(block.Timestamp, 10) +
+		block.PrevHash +
+		TransactionsDigest(block.Transactions) +
+		strconv.Itoa(block.Nonce)
+
+	return crypto.GenerateHash(record)
+}
+
+// IsPoWValid checks if a hash satisfies Difficulty leading zeros.
+func IsPoWValid(hash string) bool {
+	return strings.HasPrefix(hash, strings.Repeat("0", Difficulty))
+}
+
+// MineBlock increments nonce until PoW is valid and sets block.Hash.
 func MineBlock(block *Block) {
 	for {
 		hash := CalculateBlockHash(block)
-		if strings.HasPrefix(hash, strings.Repeat("0", Difficulty)) {
+		if IsPoWValid(hash) {
 			block.Hash = hash
 			return
 		}
@@ -23,27 +47,20 @@ func MineBlock(block *Block) {
 	}
 }
 
-// CalculateBlockHash MUST include transactions to prevent tampering.
-func CalculateBlockHash(block *Block) string {
-	txDigest := TransactionsDigest(block.Transactions)
-
-	record := strconv.Itoa(block.Index) +
-		strconv.FormatInt(block.Timestamp, 10) +
-		txDigest +
-		block.PrevHash +
-		strconv.Itoa(block.Nonce)
-
-	return crypto.GenerateHash(record)
-}
-
 // TransactionsDigest creates a deterministic digest of txs.
+// It avoids relying on tx.ID (since your Transaction type doesn’t have ID).
 func TransactionsDigest(txs []Transaction) string {
-	// Use JSON + SHA256 for deterministic digest (simple + stable).
-	b, _ := json.Marshal(txs)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-
-func IsPoWValid(hash string) bool {
-	return strings.HasPrefix(hash, strings.Repeat("0", Difficulty))
+	var b strings.Builder
+	for _, tx := range txs {
+		// Keep it stable + simple:
+		b.WriteString(tx.From)
+		b.WriteString("->")
+		b.WriteString(tx.To)
+		b.WriteString(":")
+		b.WriteString(strconv.Itoa(tx.Amount))
+		b.WriteString("@")
+		b.WriteString(strconv.FormatInt(tx.Timestamp, 10))
+		b.WriteString("|")
+	}
+	return crypto.GenerateHash(b.String())
 }

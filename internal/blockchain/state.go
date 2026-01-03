@@ -1,49 +1,47 @@
 package blockchain
 
-import "errors"
+import "sync"
 
-// State holds account balances
 type State struct {
-	Balances map[string]int
+	mu       sync.RWMutex
+	balances map[string]int
 }
 
 func NewState() *State {
-	return &State{
-		Balances: make(map[string]int),
-	}
+	return &State{balances: make(map[string]int)}
 }
 
 func (s *State) GetBalance(addr string) int {
-	return s.Balances[addr]
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.balances[addr]
 }
 
-func (s *State) Credit(addr string, amount int) {
-	s.Balances[addr] += amount
+// BalanceOf is an alias used by some parts of the codebase.
+func (s *State) BalanceOf(addr string) int {
+	return s.GetBalance(addr)
 }
 
-func (s *State) Debit(addr string, amount int) error {
-	if s.Balances[addr] < amount {
-		return errors.New("insufficient funds")
-	}
-	s.Balances[addr] -= amount
-	return nil
-}
+// ApplyBlock applies all txs in the block to the state.
+// Rule (simple):
+// - if tx.From != "" then subtract Amount from From
+// - always add Amount to tx.To
+func (s *State) ApplyBlock(b Block) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// ApplyTx applies a tx to balances (assumes signature already verified)
-func (s *State) ApplyTx(tx Transaction) error {
-	if tx.Amount <= 0 {
-		return errors.New("amount must be > 0")
-	}
+	for _, tx := range b.Transactions {
+		if tx.Amount < 0 {
+			// ignore/invalid; keep it simple
+			continue
+		}
 
-	if tx.IsCoinbase() {
-		s.Credit(tx.To, tx.Amount)
-		return nil
+		if tx.From != "" {
+			s.balances[tx.From] -= tx.Amount
+		}
+		if tx.To != "" {
+			s.balances[tx.To] += tx.Amount
+		}
 	}
-
-	// normal transfer
-	if err := s.Debit(tx.From, tx.Amount); err != nil {
-		return err
-	}
-	s.Credit(tx.To, tx.Amount)
 	return nil
 }

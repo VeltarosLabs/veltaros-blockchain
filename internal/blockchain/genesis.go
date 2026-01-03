@@ -1,13 +1,13 @@
 package blockchain
 
-// GenesisBlock creates the first block of the chain
 func GenesisBlock() Block {
-	block := Block{
+	gen := Block{
 		Index:        0,
-		Timestamp:    0,
+		Timestamp:    now(),
 		Transactions: []Transaction{},
-		PrevHash:     "0",
+		PrevHash:     "",
+		Nonce:        0,
 	}
-	MineBlock(&block)
-	return block
+	MineBlock(&gen)
+	return gen
 }
