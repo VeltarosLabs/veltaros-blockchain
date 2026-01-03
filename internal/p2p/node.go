@@ -76,7 +76,9 @@ func (n *Node) handleMessage(msg Message) {
 	case MsgTransaction:
 		var tx blockchain.Transaction
 		_ = json.Unmarshal(msg.Data, &tx)
-		n.Blockchain.AddTransaction(tx)
+		if err := n.Blockchain.AddTransaction(tx); err != nil {
+			fmt.Println("Rejected tx:", err)
+		}
 
 	case MsgBlock:
 		var block blockchain.Block

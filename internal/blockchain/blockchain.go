@@ -17,8 +17,8 @@ func NewBlockchain() *Blockchain {
 }
 
 // AddTransaction adds a transaction to the mempool
-func (bc *Blockchain) AddTransaction(tx Transaction) {
-	bc.Mempool.AddTransaction(tx)
+func (bc *Blockchain) AddTransaction(tx Transaction) error {
+	return bc.Mempool.AddTransaction(tx)
 }
 
 // MinePendingTransactions creates a new block from mempool txs

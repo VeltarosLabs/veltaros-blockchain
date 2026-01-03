@@ -1,28 +1,34 @@
 package blockchain
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
 
-// Mempool stores pending transactions
 type Mempool struct {
 	transactions []Transaction
 	lock         sync.Mutex
 }
 
-// NewMempool creates a new mempool
 func NewMempool() *Mempool {
-	return &Mempool{
-		transactions: []Transaction{},
-	}
+	return &Mempool{transactions: []Transaction{}}
 }
 
-// AddTransaction adds tx to mempool
-func (m *Mempool) AddTransaction(tx Transaction) {
+func (m *Mempool) AddTransaction(tx Transaction) error {
+	ok, err := tx.Verify()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("invalid signature")
+	}
+
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.transactions = append(m.transactions, tx)
+	return nil
 }
 
-// Flush returns all txs and clears mempool
 func (m *Mempool) Flush() []Transaction {
 	m.lock.Lock()
 	defer m.lock.Unlock()
