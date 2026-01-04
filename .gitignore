@@ -1,11 +1,12 @@
 # wallets / private keys (NEVER commit)
 *.pem
 
-# local db files
+# local chain storage
 *.db
 *.bolt
-*.sqlite
 data/
+dataA/
+dataB/
 
-# OS
+# OS / editor
 .DS_Store
