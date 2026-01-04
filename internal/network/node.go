@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"runtime/debug"
+	"time"
 
 	"github.com/VeltarosLabs/veltaros-blockchain/internal/blockchain"
 )
@@ -18,21 +20,41 @@ func NewNode(chain *blockchain.Blockchain) *Node {
 	return &Node{Chain: chain}
 }
 
+// wrap adds panic recovery + consistent JSON headers.
+func (n *Node) wrap(h func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC in %s %s: %v\n%s", r.Method, r.URL.Path, rec, string(debug.Stack()))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		h(w, r)
+	}
+}
+
 func (n *Node) Start(port string) {
+	mux := http.NewServeMux()
+
 	// Keep old routes + new routes (so your CLI keeps working)
-	http.HandleFunc("/transaction", n.handleTransaction) // POST (accepts full tx json)
-	http.HandleFunc("/tx", n.handleNewTx)                // POST (from,to,amount)
-	http.HandleFunc("/mine", n.handleMine)               // POST (miner)
-	http.HandleFunc("/chain", n.handleChain)             // GET
-	http.HandleFunc("/balance", n.handleBalance)         // GET ?addr=
-	http.HandleFunc("/nonce", n.handleNonce)
+	mux.HandleFunc("/transaction", n.wrap(n.handleTransaction)) // POST (full tx json)
+	mux.HandleFunc("/tx", n.wrap(n.handleNewTx))                // POST (from,to,amount)
+	mux.HandleFunc("/mine", n.wrap(n.handleMine))               // POST (miner)
+	mux.HandleFunc("/chain", n.wrap(n.handleChain))             // GET
+	mux.HandleFunc("/balance", n.wrap(n.handleBalance))         // GET ?addr=
+	mux.HandleFunc("/nonce", n.wrap(n.handleNonce))             // GET ?addr=
+
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	log.Println("HTTP API listening on port", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(srv.ListenAndServe())
 }
 
 // POST /transaction
-// body: full blockchain.Transaction json
 func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -55,13 +77,10 @@ func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok": true,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 // POST /tx
-// body: {"from":"...","to":"...","amount":10}
 func (n *Node) handleNewTx(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -87,6 +106,14 @@ func (n *Node) handleNewTx(w http.ResponseWriter, r *http.Request) {
 	if err := n.Chain.AddTransaction(tx); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if n.Broadcaster != nil {
+		n.Broadcaster.BroadcastTx(tx)
+	}
+
+	if n.DataDir != "" {
+		_ = n.Chain.SaveToDisk(n.DataDir)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -116,10 +143,7 @@ func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if n.DataDir != "" {
-		_ = n.Chain.SaveToDisk(n.DataDir)
-	}
-
+	// Mine first, then persist (avoid saving broken state if mining fails)
 	block, err := n.Chain.MinePendingTransactions(payload.Miner)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -128,6 +152,10 @@ func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
 
 	if n.Broadcaster != nil {
 		n.Broadcaster.BroadcastBlock(block)
+	}
+
+	if n.DataDir != "" {
+		_ = n.Chain.SaveToDisk(n.DataDir)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
