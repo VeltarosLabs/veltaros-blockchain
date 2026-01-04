@@ -1,0 +1,54 @@
+
+### `docs/index.html`
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Veltaros (VLT)</title>
+  <link rel="icon" href="../assets/logo.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <img class="logo" src="../assets/logo.png" alt="Veltaros Logo" />
+      <h1>Veltaros (VLT)</h1>
+      <p>A Go-based blockchain network with PoW, wallets, transactions, HTTP API and P2P.</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/VeltarosLabs/veltaros-blockchain">GitHub</a>
+        <a class="btn secondary" href="../README.md">Docs</a>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>What is Veltaros?</h2>
+      <p>
+        Veltaros is a learning-first blockchain implementation that is evolving toward a full Bitcoin/Ethereum-like
+        node stack: consensus, networking, wallet signing, mempool, mining, sync, and tooling.
+      </p>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h3>Coin</h3>
+        <p><strong>Symbol:</strong> VLT</p>
+        <p><strong>Purpose:</strong> fees + mining reward (network incentive)</p>
+      </div>
+      <div class="card">
+        <h3>Node</h3>
+        <p>HTTP API for clients + P2P for syncing blocks and transactions.</p>
+      </div>
+      <div class="card">
+        <h3>Roadmap</h3>
+        <p>Persistence → stronger tx model → difficulty/retarget → discovery → explorer.</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <small>© Veltaros Labs — Veltaros Blockchain</small>
+    </footer>
+  </main>
+</body>
+</html>

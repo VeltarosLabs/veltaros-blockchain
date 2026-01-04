@@ -11,6 +11,7 @@ import (
 type Node struct {
 	Chain       *blockchain.Blockchain
 	Broadcaster Broadcaster
+	DataDir     string
 }
 
 func NewNode(chain *blockchain.Blockchain) *Node {
@@ -24,6 +25,7 @@ func (n *Node) Start(port string) {
 	http.HandleFunc("/mine", n.handleMine)               // POST (miner)
 	http.HandleFunc("/chain", n.handleChain)             // GET
 	http.HandleFunc("/balance", n.handleBalance)         // GET ?addr=
+	http.HandleFunc("/nonce", n.handleNonce)
 
 	log.Println("HTTP API listening on port", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
@@ -46,6 +48,10 @@ func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
 	if err := n.Chain.AddTransaction(tx); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if n.DataDir != "" {
+		_ = n.Chain.SaveToDisk(n.DataDir)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -77,7 +83,7 @@ func (n *Node) handleNewTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx := blockchain.NewTransaction(req.From, req.To, req.Amount)
+	tx := blockchain.NewTransaction(req.From, req.To, req.Amount, 0, 0)
 	if err := n.Chain.AddTransaction(tx); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -108,6 +114,10 @@ func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
 	if payload.Miner == "" {
 		http.Error(w, "missing miner address", http.StatusBadRequest)
 		return
+	}
+
+	if n.DataDir != "" {
+		_ = n.Chain.SaveToDisk(n.DataDir)
 	}
 
 	block, err := n.Chain.MinePendingTransactions(payload.Miner)
@@ -153,5 +163,26 @@ func (n *Node) handleBalance(w http.ResponseWriter, r *http.Request) {
 		"address": addr,
 		"balance": n.Chain.State.GetBalance(addr),
 		"unit":    "VLT",
+	})
+}
+
+func (n *Node) handleNonce(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	addr := r.URL.Query().Get("addr")
+	if addr == "" {
+		http.Error(w, "missing addr", http.StatusBadRequest)
+		return
+	}
+
+	nonce := n.Chain.State.NextNonce(addr)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"address": addr,
+		"nonce":   nonce,
 	})
 }

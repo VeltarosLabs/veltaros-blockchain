@@ -2,194 +2,253 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
-	"github.com/VeltarosLabs/veltaros-blockchain/internal/wallet"
+	"github.com/VeltarosLabs/veltaros-blockchain/internal/blockchain"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		printUsage()
-		return
+		usage()
+		os.Exit(2)
 	}
 
 	switch os.Args[1] {
 	case "wallet-new":
-		walletNew()
+		cmdWalletNew(os.Args[2:])
 	case "send":
-		sendTx()
+		cmdSend(os.Args[2:])
 	case "mine":
-		mine()
+		cmdMine(os.Args[2:])
 	case "balance":
-		balance()
-	case "chain":
-		chain()
+		cmdBalance(os.Args[2:])
+	case "nonce":
+		cmdNonce(os.Args[2:])
 	default:
-		printUsage()
+		usage()
+		os.Exit(2)
 	}
 }
 
-func printUsage() {
-	fmt.Println("Veltaros Node CLI")
+func usage() {
+	fmt.Println("Veltaros CLI")
 	fmt.Println("")
 	fmt.Println("Commands:")
-	fmt.Println("  wallet-new  --out <file.pem>                  Create a new wallet private key")
-	fmt.Println("  send        --from <addr> --to <addr> --amount <n> --node <host:port>")
-	fmt.Println("  mine        --miner <addr> --node <host:port>")
-	fmt.Println("  balance     --addr <addr> --node <host:port>")
-	fmt.Println("  chain       --node <host:port>")
-	fmt.Println("")
-	fmt.Println("Examples:")
-	fmt.Println("  go run cmd/node/main.go wallet-new --out alice.pem")
-	fmt.Println("  go run cmd/node/main.go wallet-new --out bob.pem")
-	fmt.Println("  go run cmd/node/main.go mine --miner ALICE_ADDR --node localhost:3000")
-	fmt.Println("  go run cmd/node/main.go send --from ALICE_ADDR --to BOB_ADDR --amount 5 --node localhost:3000")
-	fmt.Println("  go run cmd/node/main.go mine --miner ALICE_ADDR --node localhost:3000")
-	fmt.Println("  go run cmd/node/main.go balance --addr ALICE_ADDR --node localhost:3000")
-	fmt.Println("  go run cmd/node/main.go balance --addr BOB_ADDR --node localhost:3000")
-	fmt.Println("  go run cmd/node/main.go chain --node localhost:3000")
+	fmt.Println("  wallet-new --out alice.pem")
+	fmt.Println("  nonce      --addr ADDRESS --node 127.0.0.1:3000")
+	fmt.Println("  send       --wallet alice.pem --to TO_ADDR --amount 5 --fee 1 --node 127.0.0.1:3000")
+	fmt.Println("  mine       --miner MINER_ADDR --node 127.0.0.1:3000")
+	fmt.Println("  balance    --addr ADDRESS --node 127.0.0.1:3000")
 }
 
-func walletNew() {
-	cmd := flag.NewFlagSet("wallet-new", flag.ExitOnError)
-	out := cmd.String("out", "wallet.pem", "output pem file")
-	_ = cmd.Parse(os.Args[2:])
+func cmdWalletNew(args []string) {
+	fs := flag.NewFlagSet("wallet-new", flag.ExitOnError)
+	out := fs.String("out", "wallet.pem", "output pem file")
+	fs.Parse(args)
 
-	w, err := wallet.NewWallet()
+	priv, addr, err := blockchain.GenerateWallet()
 	if err != nil {
-		fmt.Println("wallet error:", err)
-		return
+		fmt.Println("error:", err)
+		os.Exit(1)
 	}
 
-	if err := wallet.SavePrivateKeyPEM(*out, w.PrivateKey); err != nil {
-		fmt.Println("save error:", err)
-		return
+	if err := writeECPrivateKeyPEM(*out, priv); err != nil {
+		fmt.Println("error:", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("wallet created!")
-	fmt.Println("Address:", w.Address)
+	fmt.Println("Address:", addr)
 	fmt.Println("Saved private key to:", *out)
 }
 
-// sendTx posts to the node endpoint that accepts tx JSON.
-// IMPORTANT: we pass --from address directly (no wallet loading function needed).
-func sendTx() {
-	cmd := flag.NewFlagSet("send", flag.ExitOnError)
-	from := cmd.String("from", "", "sender address")
-	to := cmd.String("to", "", "recipient address")
-	amount := cmd.Int("amount", 0, "amount to send")
-	node := cmd.String("node", "localhost:3000", "node address")
-	_ = cmd.Parse(os.Args[2:])
-
-	if *from == "" || *to == "" || *amount <= 0 {
-		fmt.Println("Usage: send --from <addr> --to <addr> --amount <n> --node localhost:3000")
-		return
-	}
-
-	body := map[string]any{
-		"from":   *from,
-		"to":     *to,
-		"amount": *amount,
-	}
-
-	b, _ := json.Marshal(body)
-
-	// Your node currently uses /transaction (based on your node.go screenshot)
-	resp, err := http.Post("http://"+*node+"/transaction", "application/json", bytes.NewReader(b))
-	if err != nil {
-		fmt.Println("request error:", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Println("node error:", string(data))
-		return
-	}
-
-	fmt.Println(string(data))
-}
-
-func mine() {
-	cmd := flag.NewFlagSet("mine", flag.ExitOnError)
-	miner := cmd.String("miner", "", "miner address")
-	node := cmd.String("node", "localhost:3000", "node address")
-	_ = cmd.Parse(os.Args[2:])
-
-	if *miner == "" {
-		fmt.Println("Usage: mine --miner <addr> --node localhost:3000")
-		return
-	}
-
-	body := map[string]any{"miner": *miner}
-	b, _ := json.Marshal(body)
-
-	resp, err := http.Post("http://"+*node+"/mine", "application/json", bytes.NewReader(b))
-	if err != nil {
-		fmt.Println("request error:", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		fmt.Println("node error:", string(data))
-		return
-	}
-	fmt.Println(string(data))
-}
-
-func balance() {
-	cmd := flag.NewFlagSet("balance", flag.ExitOnError)
-	addr := cmd.String("addr", "", "address")
-	node := cmd.String("node", "localhost:3000", "node address")
-	_ = cmd.Parse(os.Args[2:])
+func cmdNonce(args []string) {
+	fs := flag.NewFlagSet("nonce", flag.ExitOnError)
+	addr := fs.String("addr", "", "address")
+	node := fs.String("node", "127.0.0.1:3000", "http node host:port")
+	fs.Parse(args)
 
 	if *addr == "" {
-		fmt.Println("Usage: balance --addr <addr> --node localhost:3000")
-		return
+		fmt.Println("missing --addr")
+		os.Exit(2)
 	}
 
-	resp, err := http.Get("http://" + *node + "/balance?addr=" + *addr)
+	nonce, err := getNonce(*node, *addr)
 	if err != nil {
-		fmt.Println("request error:", err)
-		return
+		fmt.Println("error:", err)
+		os.Exit(1)
 	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		fmt.Println("node error:", string(data))
-		return
-	}
-
-	fmt.Println(string(data))
+	fmt.Printf("{\"address\":\"%s\",\"nonce\":%d}\n", *addr, nonce)
 }
 
-func chain() {
-	cmd := flag.NewFlagSet("chain", flag.ExitOnError)
-	node := cmd.String("node", "localhost:3000", "node address")
-	_ = cmd.Parse(os.Args[2:])
+func cmdBalance(args []string) {
+	fs := flag.NewFlagSet("balance", flag.ExitOnError)
+	addr := fs.String("addr", "", "address")
+	node := fs.String("node", "127.0.0.1:3000", "http node host:port")
+	fs.Parse(args)
 
-	resp, err := http.Get("http://" + *node + "/chain")
+	if *addr == "" {
+		fmt.Println("missing --addr")
+		os.Exit(2)
+	}
+
+	url := fmt.Sprintf("http://%s/balance?addr=%s", *node, *addr)
+	body, err := httpGet(url)
+	if err != nil {
+		fmt.Println("error:", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(body))
+}
+
+func cmdMine(args []string) {
+	fs := flag.NewFlagSet("mine", flag.ExitOnError)
+	miner := fs.String("miner", "", "miner address")
+	node := fs.String("node", "127.0.0.1:3000", "http node host:port")
+	fs.Parse(args)
+
+	if *miner == "" {
+		fmt.Println("missing --miner")
+		os.Exit(2)
+	}
+
+	payload := map[string]any{"miner": *miner}
+	b, _ := json.Marshal(payload)
+
+	url := fmt.Sprintf("http://%s/mine", *node)
+	resp, err := httpPost(url, "application/json", b)
+	if err != nil {
+		fmt.Println("error:", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(resp))
+}
+
+func cmdSend(args []string) {
+	fs := flag.NewFlagSet("send", flag.ExitOnError)
+	walletPath := fs.String("wallet", "", "pem wallet file")
+	to := fs.String("to", "", "recipient address")
+	amount := fs.Int("amount", 0, "amount")
+	fee := fs.Int("fee", 0, "fee (optional)")
+	node := fs.String("node", "127.0.0.1:3000", "http node host:port")
+	fs.Parse(args)
+
+	if *walletPath == "" || *to == "" || *amount <= 0 {
+		fmt.Println("missing required flags: --wallet, --to, --amount")
+		os.Exit(2)
+	}
+
+	priv, err := readECPrivateKeyPEM(*walletPath)
+	if err != nil {
+		fmt.Println("error reading wallet:", err)
+		os.Exit(1)
+	}
+
+	fromAddr := blockchain.AddressFromPubKey(priv.PublicKey)
+
+	nonce, err := getNonce(*node, fromAddr)
+	if err != nil {
+		fmt.Println("error getting nonce:", err)
+		os.Exit(1)
+	}
+
+	tx := blockchain.NewTransaction(fromAddr, *to, *amount, *fee, nonce)
+	if err := tx.Sign(priv); err != nil {
+		fmt.Println("error signing tx:", err)
+		os.Exit(1)
+	}
+
+	raw, _ := json.Marshal(tx)
+	url := fmt.Sprintf("http://%s/transaction", *node)
+
+	resp, err := httpPost(url, "application/json", raw)
 	if err != nil {
 		fmt.Println("request error:", err)
-		return
+		os.Exit(1)
+	}
+	fmt.Println(string(resp))
+}
+
+// -------- HTTP helpers --------
+
+func httpGet(url string) ([]byte, error) {
+	c := &http.Client{Timeout: 10 * time.Second}
+	resp, err := c.Get(url)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		fmt.Println("node error:", string(data))
-		return
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
+	return b, nil
+}
 
-	fmt.Println(string(data))
+func httpPost(url, contentType string, body []byte) ([]byte, error) {
+	c := &http.Client{Timeout: 15 * time.Second}
+	resp, err := c.Post(url, contentType, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return b, nil
+}
+
+func getNonce(node string, addr string) (uint64, error) {
+	url := fmt.Sprintf("http://%s/nonce?addr=%s", node, addr)
+	b, err := httpGet(url)
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		Nonce uint64 `json:"nonce"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return 0, err
+	}
+	return out.Nonce, nil
+}
+
+// -------- PEM helpers --------
+
+func writeECPrivateKeyPEM(path string, key *ecdsa.PrivateKey) error {
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	block := &pem.Block{Type: "EC PRIVATE KEY", Bytes: der}
+	return os.WriteFile(path, pem.EncodeToMemory(block), 0600)
+}
+
+func readECPrivateKeyPEM(path string) (*ecdsa.PrivateKey, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	p, _ := pem.Decode(b)
+	if p == nil {
+		return nil, fmt.Errorf("invalid pem")
+	}
+	key, err := x509.ParseECPrivateKey(p.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
 }

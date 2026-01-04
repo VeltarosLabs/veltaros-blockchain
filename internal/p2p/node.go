@@ -9,6 +9,7 @@ import (
 	"github.com/VeltarosLabs/veltaros-blockchain/internal/blockchain"
 )
 
+// Node represents a P2P node that can connect to peers and sync blocks/txs.
 type Node struct {
 	Address    string
 	Blockchain *blockchain.Blockchain
@@ -17,6 +18,7 @@ type Node struct {
 	lock  sync.Mutex
 }
 
+// NewNode creates a new P2P node.
 func NewNode(address string, bc *blockchain.Blockchain) *Node {
 	return &Node{
 		Address:    address,
@@ -25,6 +27,7 @@ func NewNode(address string, bc *blockchain.Blockchain) *Node {
 	}
 }
 
+// Connect connects to a remote peer and starts listening to messages from it.
 func (n *Node) Connect(addr string) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -39,13 +42,14 @@ func (n *Node) Connect(addr string) error {
 
 	go n.handlePeer(peer)
 
-	// Ask for chain after connecting (sync)
+	// Ask peer for chain after connecting (sync)
 	n.sendToPeer(peer, Message{Type: MsgGetChain, Data: json.RawMessage(`{}`)})
 
 	fmt.Println("Connected to peer:", addr)
 	return nil
 }
 
+// Broadcast sends msg to all connected peers.
 func (n *Node) Broadcast(msg Message) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
@@ -55,22 +59,25 @@ func (n *Node) Broadcast(msg Message) {
 	}
 }
 
-func (n *Node) BroadcastExcept(sender string, msg Message) {
+// BroadcastExcept sends msg to all peers except senderAddr.
+func (n *Node) BroadcastExcept(senderAddr string, msg Message) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
 	for addr, peer := range n.Peers {
-		if addr == sender {
+		if addr == senderAddr {
 			continue
 		}
 		_ = json.NewEncoder(peer.Conn).Encode(msg)
 	}
 }
 
+// sendToPeer sends msg to a specific peer.
 func (n *Node) sendToPeer(peer *Peer, msg Message) {
 	_ = json.NewEncoder(peer.Conn).Encode(msg)
 }
 
+// handlePeer reads messages in a loop until the peer disconnects.
 func (n *Node) handlePeer(peer *Peer) {
 	decoder := json.NewDecoder(peer.Conn)
 
@@ -78,18 +85,24 @@ func (n *Node) handlePeer(peer *Peer) {
 		var msg Message
 		if err := decoder.Decode(&msg); err != nil {
 			fmt.Println("Peer disconnected:", peer.Addr)
+
 			n.lock.Lock()
 			delete(n.Peers, peer.Addr)
 			n.lock.Unlock()
+
+			_ = peer.Conn.Close()
 			return
 		}
-		n.handleMessage(peer.Addr, msg)
+
+		n.handleMessage(peer, msg)
 	}
 }
 
-func (n *Node) handleMessage(sender string, msg Message) {
+// handleMessage processes an incoming message from a peer.
+func (n *Node) handleMessage(peer *Peer, msg Message) {
 	switch msg.Type {
 
+	// Receive a transaction and add to mempool.
 	case MsgTransaction:
 		var tx blockchain.Transaction
 		_ = json.Unmarshal(msg.Data, &tx)
@@ -100,13 +113,15 @@ func (n *Node) handleMessage(sender string, msg Message) {
 		}
 
 		// rebroadcast to others
-		n.BroadcastExcept(sender, msg)
+		n.BroadcastExcept(peer.Addr, msg)
 
+	// Mine request: mine current mempool, broadcast new block.
 	case MsgMine:
 		var payload struct {
 			Miner string `json:"miner"`
 		}
 		_ = json.Unmarshal(msg.Data, &payload)
+
 		if payload.Miner == "" {
 			fmt.Println("Mine request missing miner address")
 			return
@@ -121,37 +136,40 @@ func (n *Node) handleMessage(sender string, msg Message) {
 		raw, _ := json.Marshal(newBlock)
 		n.Broadcast(Message{Type: MsgBlock, Data: raw})
 
+	// Receive a block and try to append.
 	case MsgBlock:
 		var b blockchain.Block
 		_ = json.Unmarshal(msg.Data, &b)
 
-		// Try append; if fails, request chain (fork or missing blocks)
+		// Try append; if fails, request full chain (fork/missing blocks)
 		if ok := n.Blockchain.TryAddBlock(b); !ok {
-			n.BroadcastExcept(sender, Message{Type: MsgGetChain, Data: json.RawMessage(`{}`)})
+			n.BroadcastExcept(peer.Addr, Message{Type: MsgGetChain, Data: json.RawMessage(`{}`)})
 			return
 		}
 
 		// If accepted, rebroadcast
-		n.BroadcastExcept(sender, msg)
+		n.BroadcastExcept(peer.Addr, msg)
 
+	// Peer asks for our chain.
 	case MsgGetChain:
 		raw, _ := json.Marshal(n.Blockchain.Blocks)
-		n.sendToPeer(n.Peers[sender], Message{Type: MsgChain, Data: raw})
+		n.sendToPeer(peer, Message{Type: MsgChain, Data: raw})
 
+	// Peer sends their chain, we prefer longer valid chain.
 	case MsgChain:
 		var chain []blockchain.Block
 		_ = json.Unmarshal(msg.Data, &chain)
 
-		// Fork rule: prefer longer valid chain
 		if n.Blockchain.TryReplaceChain(chain) {
-			fmt.Println("Chain updated from peer:", sender)
-			// After switching, you can optionally rebroadcast the new chain (not required)
+			fmt.Println("Chain updated from peer:", peer.Addr)
 		}
+
+	default:
+		// Unknown message type: ignore
 	}
 }
 
-// Implements network.Broadcaster interface (used by HTTP API node)
-
+// Broadcaster interface methods (used by internal/network HTTP API)
 func (n *Node) BroadcastTx(tx blockchain.Transaction) {
 	raw, err := json.Marshal(tx)
 	if err != nil {

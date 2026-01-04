@@ -7,4 +7,6 @@ type Block struct {
 	PrevHash     string
 	Hash         string
 	Nonce        int
+
+	UTXOTxs []UTXOTransaction `json:"utxo_txs,omitempty"`
 }
