@@ -1,12 +1,11 @@
-*.pem
-*.db
-*.bolt
-*.sqlite
-.DS_Store
 # wallets / private keys (NEVER commit)
 *.pem
 
-# optional: local db files if you persist later
+# local db files
 *.db
 *.bolt
+*.sqlite
 data/
+
+# OS
+.DS_Store

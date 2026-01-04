@@ -16,17 +16,20 @@ func NewNode(chain *blockchain.Blockchain) *Node {
 	return &Node{Chain: chain}
 }
 
-func (n *Node) Start(addr string) {
-	http.HandleFunc("/transaction", n.handleTransaction) // POST
-	http.HandleFunc("/tx", n.handleTransaction)          // POST (alias for your CLI)
-	http.HandleFunc("/mine", n.handleMine)               // POST
+func (n *Node) Start(port string) {
+	// Keep old routes + new routes (so your CLI keeps working)
+	http.HandleFunc("/transaction", n.handleTransaction) // POST (accepts full tx json)
+	http.HandleFunc("/tx", n.handleNewTx)                // POST (from,to,amount)
+	http.HandleFunc("/mine", n.handleMine)               // POST (miner)
 	http.HandleFunc("/chain", n.handleChain)             // GET
 	http.HandleFunc("/balance", n.handleBalance)         // GET ?addr=
 
-	log.Println("HTTP API listening on", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	log.Println("HTTP API listening on port", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
+// POST /transaction
+// body: full blockchain.Transaction json
 func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -50,6 +53,44 @@ func (n *Node) handleTransaction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// POST /tx
+// body: {"from":"...","to":"...","amount":10}
+func (n *Node) handleNewTx(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Amount int    `json:"amount"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.From == "" || req.To == "" || req.Amount <= 0 {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
+
+	tx := blockchain.NewTransaction(req.From, req.To, req.Amount)
+	if err := n.Chain.AddTransaction(tx); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": true,
+		"tx": tx,
+	})
+}
+
+// POST /mine
+// body: {"miner":"ADDRESS"}
 func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -78,6 +119,7 @@ func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(block)
 }
 
+// GET /chain
 func (n *Node) handleChain(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
@@ -88,6 +130,7 @@ func (n *Node) handleChain(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(n.Chain.Blocks)
 }
 
+// GET /balance?addr=ADDRESS
 func (n *Node) handleBalance(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
@@ -105,38 +148,5 @@ func (n *Node) handleBalance(w http.ResponseWriter, r *http.Request) {
 		"address": addr,
 		"balance": n.Chain.State.GetBalance(addr),
 		"unit":    "VLT",
-	})
-}
-
-// POST /tx
-// body: {"from":"...","to":"...","amount":10}
-func (n *Node) handleNewTx(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		From   string `json:"from"`
-		To     string `json:"to"`
-		Amount int    `json:"amount"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-
-	tx := blockchain.NewTransaction(req.From, req.To, req.Amount)
-
-	if err := n.Chain.AddTransaction(tx); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok": true,
-		"tx": tx,
 	})
 }
