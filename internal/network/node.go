@@ -9,7 +9,8 @@ import (
 )
 
 type Node struct {
-	Chain *blockchain.Blockchain
+	Chain       *blockchain.Blockchain
+	Broadcaster Broadcaster
 }
 
 func NewNode(chain *blockchain.Blockchain) *Node {
@@ -113,6 +114,10 @@ func (n *Node) handleMine(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if n.Broadcaster != nil {
+		n.Broadcaster.BroadcastBlock(block)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

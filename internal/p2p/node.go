@@ -149,3 +149,21 @@ func (n *Node) handleMessage(sender string, msg Message) {
 		}
 	}
 }
+
+// Implements network.Broadcaster interface (used by HTTP API node)
+
+func (n *Node) BroadcastTx(tx blockchain.Transaction) {
+	raw, err := json.Marshal(tx)
+	if err != nil {
+		return
+	}
+	n.Broadcast(Message{Type: MsgTransaction, Data: raw})
+}
+
+func (n *Node) BroadcastBlock(b blockchain.Block) {
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return
+	}
+	n.Broadcast(Message{Type: MsgBlock, Data: raw})
+}
